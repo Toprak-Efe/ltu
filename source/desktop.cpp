@@ -83,19 +83,18 @@ int ltu::run_desktop_entry(const ltu::desktop_entry_t &desktop_entry, const ltu:
     std::string command;
     std::optional<fs::path> exec_path_opt = get_absolute_path(desktop_entry.exec);
     if (!exec_path_opt.has_value()) {
-        std::cerr << "Couldn't find the executable " << desktop_entry.exec << ", exiting.\n";
+        std::clog << "Couldn't find the executable " << desktop_entry.exec << ", exiting.\n";
         return 1;
     }
     if (desktop_entry.terminal) {
         std::optional<fs::path> terminal_path_opt = get_absolute_path(terminal_profile.binary);
         if (!terminal_path_opt.has_value()) {
-            std::cerr << "Couldn't find the terminal program " << terminal_profile.binary << ", exiting.\n";
+            std::clog << "Couldn't find the terminal program " << terminal_profile.binary << ", exiting.\n";
             return 1;
         }
         command = terminal_path_opt.value().string() + " " + terminal_profile.flag + " ";
     }
     command = command + exec_path_opt.value().string();
-    std::cout << "Running command: " << command << "\n";
 
     bp::child c(
         command,
@@ -104,6 +103,7 @@ int ltu::run_desktop_entry(const ltu::desktop_entry_t &desktop_entry, const ltu:
         bp::std_in < bp::null,
         bp::extend::on_setup([](auto&) {
             ::setsid();
+            ::signal(SIGHUP, SIG_IGN); 
         })
     );
     c.detach();

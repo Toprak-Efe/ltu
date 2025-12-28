@@ -24,7 +24,7 @@ namespace ltu {
         {"xfce4-terminal", {"xfce4-terminal", "-x"}} 
     };
 
-    std::optional<terminal_profile_t> get_terminal_profile();
+    std::optional<terminal_profile_t> get_terminal_profile(const char *term_arg);
 
 } // namespace ltu 
 

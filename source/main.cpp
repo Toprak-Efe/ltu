@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <map>
 #include <array>
 #include <ranges>
@@ -19,14 +20,29 @@ namespace ltu {
             "/usr/local/share/applications/"sv,
         }) ;
     };
+
+    void usage_error() {
+        std::clog << "Bad usage. Example:\n";
+        std::clog << "ltu <terminal>\n\n";
+        std::clog << "<terminal>: The terminal emulator all CLI applications should be started on.\nOptions:\n";
+        for (std::string &term : ltu::g_known_terminals
+            | std::ranges::views::keys
+            | std::ranges::to<std::vector>()) {
+            std::clog << "  " << term << "\n"; 
+        }
+        std::exit(1);
+    }
+
 }; // namespace ltu
 
 int main (int argc, char *argv[]) {
     /* Fetch Terminal Info */
-    auto terminal_profile_opt = ltu::get_terminal_profile();
+    if (argc != 2) {
+        ltu::usage_error();
+    }
+    auto terminal_profile_opt = ltu::get_terminal_profile(argv[1]);
     if (!terminal_profile_opt.has_value()) {
-        std::cerr << "Unable to detect terminal command through $TERMCMD, exiting.\n";
-        return 1;
+        ltu::usage_error();
     }
     auto terminal_profile = terminal_profile_opt.value(); 
     /* Scan Desktop Entries */
@@ -52,7 +68,7 @@ int main (int argc, char *argv[]) {
     }
     /* Select and Run */
     int selected_idx = menu::select(menu_items);
-    if (1 > selected_idx) return 0;
+    if (1 > selected_idx) std::exit(0); 
     ltu::desktop_entry_t selected_entry = entries[menu_items[selected_idx]];
-    return ltu::run_desktop_entry(selected_entry, terminal_profile);
+    std::exit(ltu::run_desktop_entry(selected_entry, terminal_profile));
 }
