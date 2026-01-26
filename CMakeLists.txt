@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 4.0.0)
-project(ltu
+project(launcher-tui
     VERSION 0.0.1
     DESCRIPTION "A terminal application launcher"
     LANGUAGES CXX
@@ -23,9 +23,9 @@ add_executable(${CMAKE_PROJECT_NAME}
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${Boost_INCLUDE_DIRS}
     ${ftxui_INCLUDE_DIRS}
-    include
 )
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE 

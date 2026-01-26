@@ -1,13 +1,13 @@
-# Launcher Terminal Interface (LTU)
+# Launcher Terminal User Interface (Launcher-TUI)
 
-This is an application launcher accommodating an ncurses-like interface that operates in the terminal.
+This is an application launcher accommodating an ncurses-like interface that operates in the terminal. 
 
 ## Usage
 
 You may run the launcher by calling it with a terminal argument.
 
 ```sh
-ltu <terminal>
+launcher-tui <terminal>
 ```
 
 Where `<terminal>` currently supports one of the following options.
