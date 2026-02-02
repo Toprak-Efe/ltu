@@ -1,8 +1,13 @@
 #include <algorithm>
-#include <cctype>
+#include <boost/algorithm/string/trim.hpp>
+#include <boost/process/v1/exe.hpp>
+#include <boost/regex.hpp>
+#include <boost/regex/v5/regex_replace.hpp>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <string_view>
+#include <unistd.h>
 #include <vector>
 #include <optional>
 
@@ -13,100 +18,197 @@
 #include <terminal.hpp>
 
 namespace ltu {
+
+    bool is_executable(const std::string &path) {
+        return std::filesystem::is_regular_file(path) &&
+            ::access(path.c_str(), X_OK);
+    }
+
     std::vector<std::filesystem::path> parse_path_var() {
         const char* path_variable = getenv("PATH");
         if (!path_variable) return {};
-        std::vector<std::string_view> parsed_strings;
-        size_t idx = 0, prev_idx = 0;
-        while (true) {
-            if (path_variable[idx] == ':') {
-                parsed_strings.emplace_back(path_variable + prev_idx, idx - prev_idx);
-                prev_idx = idx + 1;
+        std::string_view path_sv(path_variable);
+
+        std::vector<std::filesystem::path> parsed_paths;
+
+        size_t start = 0, end = 0;
+        while ((end = path_sv.find(':', start)) != std::string_view::npos) {
+            if (end != start && end != start + 1) {
+                parsed_paths.emplace_back(path_sv.substr(start, end - start));
             }
-            if (path_variable[idx] == '\0') {
-                if (path_variable[prev_idx] != '\0')
-                    parsed_strings.emplace_back(path_variable + prev_idx, idx - prev_idx);
-                break;
-            }
-            idx++;
+            start = end + 1;
         }
-        std::vector<std::filesystem::path> out;
-        for (const auto &path_sv : parsed_strings) {
-            out.emplace_back(std::filesystem::path(path_sv));
+        if (start < path_sv.size()) {
+            parsed_paths.emplace_back(path_sv.substr(start));
         }
-        return out;
+
+        return parsed_paths;
     } 
     
     std::optional<std::filesystem::path> get_absolute_path(const std::string &command) {
         namespace fs = std::filesystem;
         fs::path command_path(command);
+
         if (command_path.is_absolute() && fs::is_regular_file(command_path)) return command_path;
-        auto path_executable_dirs = ltu::parse_path_var();
-        for (fs::path path_executable_dir : path_executable_dirs) {
-            fs::path executable_candidate = path_executable_dir / command_path; 
-            if (fs::is_regular_file(executable_candidate)) return executable_candidate;
+        static const std::vector<fs::path> path_dirs = parse_path_var();
+
+        for (const auto & dir : path_dirs) {
+            fs::path candidate = dir / command_path; 
+            if (is_executable(candidate)) return candidate;
         }
         return {};
     }
+
+    std::vector<std::string> tokenize_command(const std::string &command) {
+        std::vector<std::string> args;
+        std::string curr_token;
+
+        bool double_quote(false), single_quote(false), escaped(false);
+
+        for (char c : command) {
+            if (escaped) {
+                curr_token += c;
+                escaped = false;
+                continue;
+            }
+            if (c == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (double_quote) {
+                if (c == '\"') {
+                    double_quote = false;
+                } else {
+                    curr_token += c;
+                }
+                continue;
+            }
+            if (single_quote) {
+                if (c == '\'') {
+                    single_quote = false;
+                } else {
+                    curr_token += c;
+                }
+                continue;
+            }
+
+            switch (c) {
+                case ' ':
+                case '\t':
+                    if (!curr_token.empty()) {
+                        args.emplace_back(curr_token);
+                        curr_token.clear(); 
+                        break;
+                    }
+                case '\'':
+                    single_quote = true;
+                    break;
+                case '\"':
+                    double_quote = true;
+                    break;
+                case '\\':
+                    escaped = true;
+                    break;
+                default:
+                    curr_token += c;
+                    break;
+            }
+        }
+        if (!curr_token.empty()) {
+            args.emplace_back(curr_token);
+        }
+
+        return args;
+    }
+
 } // namespace ltu
 
 std::optional<ltu::desktop_entry_t> ltu::parse_desktop_file(const std::filesystem::path &desktop_file) {
-    INIReader reader(desktop_file);
+    INIReader reader(desktop_file.string());
+    if (reader.ParseError() < -1) {
+        std::cerr << "Unable to open file " << desktop_file << " for parsing.\n";
+        return {};
+    };
+
     std::string type = reader.Get("Desktop Entry", "Type", "");
     if (type != "Application") return {};
+
     desktop_entry_t out;
     out.name = reader.Get("Desktop Entry", "Name", "Unnamed");
     out.comment = reader.Get("Desktop Entry", "Comment", "No description.");
     out.terminal = reader.GetBoolean("Desktop Entry", "Terminal", false);
+    out.path = desktop_file;
 
     std::string exec_str = reader.Get("Desktop Entry", "Exec", "");
-    if (exec_str.size() == 0) return {};
-    size_t p_idx = 0;
-    while ((p_idx = exec_str.find('%')) != std::string::npos) {
-        exec_str[p_idx] = ' ';
-        if (p_idx != exec_str.length()-1) exec_str[p_idx+1] = ' ';
-    }
-    size_t strip_begin = 0, strip_end = exec_str.size() - 1;
-    while (exec_str[strip_begin] == ' ') strip_begin++; 
-    while (exec_str[strip_end] == ' ' && strip_end > 0) strip_end--; 
-    exec_str = exec_str.substr(strip_begin, strip_end - strip_begin + 1);
-    out.exec = exec_str;
+    if (exec_str.empty()) return {}; 
 
-    out.path = desktop_file;
+    boost::trim(exec_str);
+
+    static const boost::regex formatting_pattern("%[uUFi]?");
+    exec_str = boost::regex_replace(exec_str, formatting_pattern, "");
+    boost::trim(exec_str);
+
+    std::vector<std::string> args = tokenize_command(exec_str);
+    if (args.empty()) return {};
+
+    out.exec = args[0];
+    if (args.size() > 1) {
+        out.args.assign(args.begin() + 1, args.end()); 
+    }
+
     return out;
 }
-    
+
 int ltu::run_desktop_entry(const ltu::desktop_entry_t &desktop_entry, const ltu::terminal_profile_t &terminal_profile) {
     namespace bp = boost::process::v1;
     namespace fs = std::filesystem;
-    
+
     std::string command;
     std::optional<fs::path> exec_path_opt = get_absolute_path(desktop_entry.exec);
     if (!exec_path_opt.has_value()) {
         std::clog << "Couldn't find the executable " << desktop_entry.exec << ", exiting.\n";
         return 1;
     }
+
+    fs::path binary;
+    std::vector<std::string> args;
+
     if (desktop_entry.terminal) {
-        std::optional<fs::path> terminal_path_opt = get_absolute_path(terminal_profile.binary);
-        if (!terminal_path_opt.has_value()) {
+        std::optional<fs::path> term_path = get_absolute_path(terminal_profile.binary);
+        if (!term_path.has_value()) {
             std::clog << "Couldn't find the terminal program " << terminal_profile.binary << ", exiting.\n";
             return 1;
         }
-        command = terminal_path_opt.value().string() + " " + terminal_profile.flag + " ";
+        binary = term_path.value();
+        std::stringstream ss(terminal_profile.flag);
+        std::string segment;
+        while (std::getline(ss, segment, ' ')) {
+            if (!segment.empty()) args.push_back(segment);
+        }
+        args.push_back(exec_path_opt.value().string());
+        args.insert(args.end(), desktop_entry.args.begin(), desktop_entry.args.end());
+    } else {
+        binary = exec_path_opt.value();
+        args= desktop_entry.args;
     }
-    command = command + exec_path_opt.value().string();
 
-    bp::child c(
-        command,
-        bp::std_out > bp::null,
-        bp::std_err > bp::null,
-        bp::std_in < bp::null,
-        bp::extend::on_setup([](auto&) {
-            ::setsid();
-            ::signal(SIGHUP, SIG_IGN); 
-        })
-    );
-    c.detach();
+    try {
+        bp::child c(
+            binary.string(),
+            bp::args(args), 
+            bp::std_out > bp::null,
+            bp::std_err > bp::null,
+            bp::std_in < bp::null,
+            bp::extend::on_setup([](auto&) {
+                ::setsid();
+                ::signal(SIGHUP, SIG_IGN); 
+            })
+        );
+        c.detach();
+    } catch (const std::exception& e) {
+        std::clog << "Failed to launch process: " << e.what() << "\n";
+        return 1;
+    }
 
     return 0;
 }

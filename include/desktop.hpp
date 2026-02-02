@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vector>
 #include <string>
 #include <optional>
 #include <filesystem>
@@ -10,6 +11,7 @@ namespace ltu {
         std::string name;
         std::string comment;
         std::string exec;
+        std::vector<std::string> args;
         bool terminal;
         std::filesystem::path path;
     } desktop_entry_t; 
