@@ -21,7 +21,7 @@ namespace ltu {
 
     bool is_executable(const std::string &path) {
         return std::filesystem::is_regular_file(path) &&
-            ::access(path.c_str(), X_OK);
+            (::access(path.c_str(), X_OK) == 0);
     }
 
     std::vector<std::filesystem::path> parse_path_var() {
